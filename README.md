@@ -51,13 +51,63 @@ Running the client:
 
 ```sh
 # first, run the script above
-yarn client:start
+yarn client:start --host 127.0.0.1 --port 3000 --base /
 
-# then visit http://127.0.0.1:3000
-# you must use 127.0.0.1 instead of localhost
+# then visit http://127.0.0.1:3000/?no_redirect=1
+# use 127.0.0.1 (not localhost) for the configured local OSM OAuth client
 ```
 
 The client is automatically deployed to github pages.
+
+## Shared review confirmations
+
+The app stores shared confirmations in Cloudflare Workers KV. The Worker
+validates the reviewer’s OpenStreetMap login before accepting a confirmation or
+restoring a result to the review list.
+
+To enable this feature:
+
+1. Install the project dependencies and create a KV namespace:
+
+   ```sh
+   yarn
+   yarn wrangler kv namespace create CONFIRMATIONS
+   ```
+
+2. Copy the namespace ID from Wrangler’s output into
+   `cloudflare/wrangler.jsonc` in place of `REPLACE_WITH_KV_NAMESPACE_ID`.
+   Add any other frontend origins to `REVIEW_ALLOWED_ORIGINS` there as a
+   comma-separated list. `https://osm-nz.github.io` is allowed by default.
+3. Deploy the Worker:
+
+   ```sh
+   yarn wrangler deploy --config cloudflare/wrangler.jsonc
+   ```
+
+4. Set the GitHub Actions repository variable `REVIEW_API_URL` to the Worker
+   endpoint, including `/confirmations`, for example
+   `https://missing-streets-confirmations.<account>.workers.dev/confirmations`.
+   The CI and weekly sync workflows use this variable when building the app.
+5. To test locally, start the Worker in a terminal:
+
+   ```sh
+   yarn wrangler dev --config cloudflare/wrangler.jsonc
+   ```
+
+   Start the frontend as described above and open
+   `http://127.0.0.1:3000/?no_redirect=1`. The app uses the local Worker
+   automatically, and Wrangler stores test confirmations in its local KV state.
+   Localhost origins are accepted only by a locally running Worker; they are
+   not allowed by the deployed Worker.
+
+The main review list remains available if the confirmations API is unavailable,
+but shared confirmations will not be applied until it responds successfully.
+Use **Show confirmed roads** to include confirmed results in the map; they are
+shown in grey and can be returned to the review list from their popup. The
+GeoJSON export follows the same toggle.
+Confirmation records include the source and OSM road names, confirmation time,
+and reviewer’s OpenStreetMap account for audit purposes. KV changes can take up
+to 60 seconds to become visible everywhere.
 
 ## Other Regions
 

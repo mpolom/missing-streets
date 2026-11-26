@@ -1,0 +1,15 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "missing-streets-confirmations",
+  "main": "./worker.ts",
+  "compatibility_date": "2026-11-26",
+  "kv_namespaces": [
+    {
+      "binding": "CONFIRMATIONS",
+      "id": "YOUR_KV_NAMESPACE_ID"
+    }
+  ],
+  "vars": {
+    "REVIEW_ALLOWED_ORIGINS": "https://osm-nz.github.io"
+  }
+}

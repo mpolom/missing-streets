@@ -5,3 +5,4 @@ public/*.geo.json
 .env.local
 .DS_Store
 src/auto-generated.ts
+cloudflare/.wrangler

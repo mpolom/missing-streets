@@ -18,10 +18,16 @@ interface App {
 interface Props {
   region: RegionMetadata;
   street: MissingStreet;
+  confirmed: boolean;
+  onConfirmationChange(confirmed: boolean): void;
 }
 
-export const Street = memo<Props>(({ region, street }) => {
+export const Street = memo<Props>((props) => {
+  const { region, street, confirmed, onConfirmationChange } = props;
   const [showQuickFixModal, setShowQuickFixModal] = useState(false);
+  const [quickFixMode, setQuickFixMode] = useState<"rename" | "confirm">(
+    "rename"
+  );
   const popupRef = useRef<LeafletPopup>(null);
 
   // will never happen, just to keep TS happy
@@ -102,11 +108,18 @@ export const Street = memo<Props>(({ region, street }) => {
   return (
     <Polyline
       positions={coords}
-      color={street.properties.nearMatchName ? "orange" : "red"}
+      color={
+        confirmed ? "#777" : street.properties.nearMatchName ? "orange" : "red"
+      }
       weight={5}
     >
       <Popup ref={popupRef} offset={[0, -10]}>
         <span className="popup-text">{name}</span>
+        {confirmed && (
+          <div className="warning">
+            Community-confirmed as correct; hidden from review by default.
+          </div>
+        )}
         {street.properties.nearMatchName && (
           <div className="warning">
             Close match to existing OSM name:
@@ -115,7 +128,7 @@ export const Street = memo<Props>(({ region, street }) => {
             </span>
           </div>
         )}
-        <div style={{ display: "flex", gap: 4 }}>
+        <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
           <button
             className="nice"
             type="button"
@@ -128,9 +141,22 @@ export const Street = memo<Props>(({ region, street }) => {
             className="nice"
             type="button"
             title="Quick Rename"
-            onClick={() => setShowQuickFixModal(true)}
+            onClick={() => {
+              setQuickFixMode("rename");
+              setShowQuickFixModal(true);
+            }}
           >
             🔄️
+          </button>
+          <button
+            className="nice"
+            type="button"
+            onClick={() => {
+              setQuickFixMode("confirm");
+              setShowQuickFixModal(true);
+            }}
+          >
+            {confirmed ? "🔍" : "☑️"}
           </button>
           {/* eslint-disable-next-line react-hooks/refs */}
           {APPS.map((app) => (
@@ -151,6 +177,9 @@ export const Street = memo<Props>(({ region, street }) => {
           <QuickFixModal
             region={region}
             street={street}
+            confirmed={confirmed}
+            mode={quickFixMode}
+            onConfirmationChange={onConfirmationChange}
             onClose={() => setShowQuickFixModal(false)}
           />
         )}

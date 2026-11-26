@@ -11,5 +11,5 @@
     "skipLibCheck": true,
     "jsx": "react-jsx"
   },
-  "include": ["src", "script"]
+  "include": ["cloudflare", "src", "script"]
 }

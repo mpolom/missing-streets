@@ -7,15 +7,29 @@ import type { MissingStreet, RegionMetadata } from "./types";
 import { useKeyboardShortcut } from "./util";
 import { HelpModal, Modal } from "./components";
 import { REGION_METADATA } from "./auto-generated";
+import {
+  getConfirmedRoadIds,
+  isConfirmationApiConfigured,
+} from "./api/confirmations";
+import { filterConfirmedStreets } from "./util/confirmedStreets";
 
 import "./index.css";
 import "leaflet/dist/leaflet.css";
 import { SYNC_TIME } from "./util/date";
 
+interface ReviewState {
+  regionCode: string;
+  roadIds: Set<number>;
+  error?: string;
+}
+
 const isInIframe = window.self !== window.top;
 const skipIframeRedirect =
   !!new URLSearchParams(window.location.search).get("no_redirect") ||
   window.location.hostname === "localhost";
+const assetBaseUrl = import.meta.env.BASE_URL.endsWith("/")
+  ? import.meta.env.BASE_URL
+  : `${import.meta.env.BASE_URL}/`;
 
 const qsRegion = new URLSearchParams(window.location.search).get("region");
 const DEFAULT_REGION =
@@ -40,7 +54,26 @@ if (!isInIframe && !skipIframeRedirect) {
 export const App: React.FC = () => {
   const [region, setRegion] = useState<RegionMetadata>(DEFAULT_REGION);
   const [data, setData] = useState<MissingStreet[]>();
-  const [dataBlobUrl, setDataBlobUrl] = useState<string>();
+  const [reviewState, setReviewState] = useState<ReviewState>(() => ({
+    regionCode: "",
+    roadIds: new Set(),
+  }));
+  const confirmationApiConfigured = isConfirmationApiConfigured();
+  const confirmationsReady =
+    !confirmationApiConfigured || reviewState.regionCode === region.code;
+  const confirmedRoadIds = useMemo(
+    () =>
+      reviewState.regionCode === region.code
+        ? reviewState.roadIds
+        : new Set<number>(),
+    [region.code, reviewState]
+  );
+  const confirmationError = confirmationApiConfigured
+    ? reviewState.regionCode === region.code
+      ? reviewState.error
+      : undefined
+    : "Shared confirmations are not configured for this deployment.";
+  const [showConfirmed, setShowConfirmed] = useState(false);
   const [error, setError] = useState<unknown>();
   const [lastUpdated, setLastUpdated] = useState<string>();
   const [modalOpen, setModalOpen] = useState(false);
@@ -72,13 +105,15 @@ export const App: React.FC = () => {
   useKeyboardShortcut("h", toggleHidden);
 
   useEffect(() => {
-    fetch(`/missing-streets/conflationResult-${region.code}.geo.json`)
-      .then((r) => r.blob())
-      .then(async (blob) => {
-        setDataBlobUrl(URL.createObjectURL(blob));
-        return blob.text();
+    fetch(`${assetBaseUrl}conflationResult-${region.code}.geo.json`)
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error(
+            `Failed to load missing streets: HTTP ${response.status}`
+          );
+        }
+        return response.json();
       })
-      .then(JSON.parse)
       .then((geojson) => {
         setData(geojson.features);
         setLastUpdated(geojson.lastUpdated);
@@ -86,13 +121,90 @@ export const App: React.FC = () => {
       .catch(setError);
   }, [region]);
 
+  useEffect(() => {
+    const controller = new AbortController();
+    if (!isConfirmationApiConfigured()) {
+      return () => controller.abort();
+    }
+
+    getConfirmedRoadIds(region.code, controller.signal)
+      .then((roadIds) => {
+        setReviewState({ regionCode: region.code, roadIds: new Set(roadIds) });
+      })
+      .catch((fetchError: unknown) => {
+        if (controller.signal.aborted) return;
+        setReviewState({
+          regionCode: region.code,
+          roadIds: new Set(),
+          error:
+            fetchError instanceof Error
+              ? fetchError.message
+              : "Failed to load shared confirmations.",
+        });
+      });
+
+    return () => controller.abort();
+  }, [region.code]);
+
+  const onConfirmationChange = useCallback(
+    (roadId: number, confirmed: boolean) => {
+      setReviewState((current) => {
+        const roadIds =
+          current.regionCode === region.code
+            ? current.roadIds
+            : new Set<number>();
+        const updated = new Set(roadIds);
+        if (confirmed) updated.add(roadId);
+        else updated.delete(roadId);
+        return { regionCode: region.code, roadIds: updated };
+      });
+    },
+    [region.code]
+  );
+
+  const downloadGeoJson = useCallback(() => {
+    if (!data) return;
+
+    const features = filterConfirmedStreets(
+      data,
+      confirmedRoadIds,
+      showConfirmed
+    );
+    const blob = new Blob(
+      [JSON.stringify({ type: "FeatureCollection", features })],
+      { type: "application/geo+json" }
+    );
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${region.code}.geo.json`;
+    link.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+  }, [confirmedRoadIds, data, region.code, showConfirmed]);
+
   const buttonRow = (
     <>
-      <a href={dataBlobUrl} download={`${region.code}.geo.json`}>
-        <button className="nice" type="button" tabIndex={-1}>
-          Export to GeoJson
+      <button
+        className="nice"
+        type="button"
+        disabled={!data}
+        onClick={downloadGeoJson}
+      >
+        Export to GeoJson
+      </button>{" "}
+      {data && confirmationsReady && (
+        <button
+          className="nice"
+          type="button"
+          aria-pressed={showConfirmed}
+          disabled={!!confirmationError}
+          onClick={() => setShowConfirmed((visible) => !visible)}
+        >
+          {showConfirmed ? "Hide" : "Show"} confirmed roads (
+          {confirmedRoadIds.size})
         </button>
-      </a>{" "}
+      )}{" "}
+      {confirmationError && <small role="alert">{confirmationError}</small>}{" "}
       <button className="nice" type="button" onClick={() => setModalOpen(true)}>
         Help
       </button>{" "}
@@ -197,7 +309,7 @@ export const App: React.FC = () => {
         <div style={{ padding: 10, background: "#f30", marginTop: 4 }}>
           Failed to load list of missing streets.
         </div>
-      ) : data ? (
+      ) : data && confirmationsReady ? (
         <MapContainer
           id="map"
           center={[home.lat, home.lon]}
@@ -208,7 +320,14 @@ export const App: React.FC = () => {
           <ScaleControl position="bottomleft" />
           <MapHook region={region} />
           <Imagery />
-          <Streets data={data} hidden={hidden} region={region} />
+          <Streets
+            data={data}
+            hidden={hidden}
+            region={region}
+            confirmedRoadIds={confirmedRoadIds}
+            showConfirmed={showConfirmed}
+            onConfirmationChange={onConfirmationChange}
+          />
           {region.code === "NZ" && (
             <WholeNetwork missingStreets={data} hidden={hidden} />
           )}
